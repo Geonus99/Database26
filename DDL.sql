@@ -833,4 +833,161 @@ select atan(45.87) as atanCalc1,
     atan(0.1472738) as atanCalc4,
     atan(197.1099392) as atanCalc5;
     
+-- 순위 함수 : 조회 결과에 순위를 부여한다.
+
+-- 유일한 값으로 순위를 부여하는 함수 - row_number
+# row_number() over([partition by 열] order by 열)
+# 정렬 조건으로 over(order by 열)을 명시 해당 열 데이터의 순위 부여
+# 그룹별 순위를 부여하고 싶다면 partition by 열 옵션을 사용
+
+-- row_number 함수로 순위 부여
+select row_number() over(order by amount desc) as num, customer_id, amount
+from (
+	select customer_id, sum(amount) as amount
+    from payment group by customer_id
+) as x; 
+# as x: 서브 쿼리 결과로 만들어진 임의의 테이블에 대한 별칭을 지칭
+# amount 값이 클수록 순위가 높음 amount가 동일하다면 customer_id에 따라 우선순위 부여
+# 동점에 대해 순위를 mysql이 임의로 부여하지 않게 하려면 order by절에 정렬 조건 추가
+select row_number() over(order by amount desc, customer_id desc) as num, customer_id, amount
+from (
+	select customer_id, sum(amount) as amount
+    from payment group by customer_id
+) as x; 
+
+-- 전체 데이터가 아닌 그룹별 순위를 부여하려면 partition 절 사용
+select staff_id,
+row_number() over(partition by staff_id order by amount desc, customer_id asc)
+as num, customer_id, amount
+from (
+	select customer_id, staff_id, sum(amount) as amount
+    from payment group by customer_id, staff_id
+) as x; 
+# staff_id열을 그룹화하기 위해 partition by staff_id 추가
+
+-- 우선순위를 고려하지 않고 순위를 부여하는 함수 - rank
+# rank 함수는 row_number 함수와 비슷하지만 같은 순위 처리하는 방법이 다름
+# rank() over([partition by 열] order by 열)
+-- rank 함수로 순위 부여
+select rank() over(order by amount desc) as num, customer_id, amount
+from (
+	select customer_id, sum(amount) as amount
+    from payment group by customer_id
+) as x;
+# 값이 같은 경우 같은 순위 부여, 공동 순위 부여 후 같은 순위 데이터 만큼 건너뛰기 후 순위 부여
+
+-- 건너뛰지 않고 순위를 부여하는 함수 -dense_rank
+# rank함수와 동일하지만 같은 순위에 있는 데이터 개수를 무시하고 순위를 매김
+# ex) 1위 3개여도 그 다음 데이터는 4위가 아닌 2위
+# dense_rank() over([partition by 열] order by 열)
+
+-- dense_rank 함수로 순위 부여
+select dense_rank() over(order by amount desc)
+as num, customer_id, amount
+from (
+	select customer_id, sum(amount) as amount
+    from payment group by customer_id
+) as x;
+
+-- 그룹 순위를 부여하는 함수 - ntile
+# 인자로 지정한 개수만큼 데이터 행을 그룹화 후 각 그룹에 순위 부여
+# ntile(정수) over([partition by 열] order by 열)
+-- 내림차순으로 정렬한 결과에 ntile 함수로 순위 부여
+select ntile(100) over(order by amount desc)
+as num, customer_id, amount
+from (
+	select customer_id, sum(amount) as amount
+    from payment group by customer_id
+) as x;
+# 전체 행을 균등하게 나눠 1순위 그룹, 2순위 그룹에
+# 차등으로 혜택을 지급할 때 활용하기 좋은 함수
+# 전체 행 개수가 인수로 정확하게 나누어 떨어지지 않으면 나머지 행은 마지막 그룹에 할당
+
+-- 분석함수
+# 데이터 그룹을 기반으로 앞뒤 행을 계산하거나 그룹에 대한 누적 분포
+# 상대 순위 등을 계산
+# 집계 함수와 달리 그룹마다 여러 행을 반환할 수 있다.
+
+-- 앞 또는 뒤 행을 참조하는 함수 - lag, lead (기본값은 1)
+# lag : 현재 행 바로 앞의 행을 조회
+# lead : 현재 행 바로 뒤의 행을 조회
+# 인자에 따라 이전 또는 이후 몇 번째 행 결정 가능
+
+# lag(또는 lead)(열 이름, 참조 위치)
+# over([partition by 열] order by 열)
+
+-- lag 와 lead 함수로 앞뒤 행 참조
+select x.payment_date,
+	lag(x.amount) over(order by x.payment_date asc) as lag_amount, amount,
+    lead(x.amount) over(order by x.payment_date asc) as lead_amount
+from (
+	select date_format(payment_date, '%y-%m-%d') as payment_date,
+    sum(amount) as amount
+    from payment group by date_format(payment_date, '%y-%m-%d')
+) as x
+order by x.payment_date;
+
+-- lag 와 lead 함수로 2칸씩 앞뒤 행 참조
+select x.payment_date,
+	lag(x.amount, 2) over(order by x.payment_date asc) as lag_amount, amount,
+    lead(x.amount, 2) over(order by x.payment_date asc) as lead_amount
+from (
+	select date_format(payment_date, '%y-%m-%d') as payment_date,
+    sum(amount) as amount
+    from payment group by date_format(payment_date, '%y-%m-%d')
+) as x
+order by x.payment_date;
     
+-- 누적 분포를 계산하는 함수(데이터 값이 포함되는 위치의 누적 분포 계산) - cume_dist
+# cume_dist() over([partition by 열] order by 열)
+# 0 초과~1 이하 범위 값 반환, 같은 값은 항상 같은 누적 분폿값으로 계산
+# null은 정의되지 않은 값이지만 cume_dist()함수는 기본적으로 null 포함
+# null은 해당 데이터 집합에서 가장 낮은 값으로 취급
+
+-- cume_dist 함수로 누적 분폿값 계산
+select x.customer_id, x.amount, cume_dist() over(order by x.amount desc)
+from (
+	select customer_id, sum(amount) as amount
+    from payment group by customer_id
+) as x
+order by x.amount desc;
+
+-- 상대 순위를 계산하는 함수 - percent_rank
+# 지정한 그룹 또는 쿼리 결과로 이루어진 그룹 내의 상대 순위를 계산
+# percent_rank() over([partition by 열] order by 열)
+# 0이상 ~1 이하 첫번째 값은 0, 마지막 값은 1
+# null은 가장 낮은 값으로 취급, 상위 분포 순위 계산할 때 하나의 데이터로 간주
+
+-- percent_rank 함수로 상위 분포 순위를 계산
+select x.customer_id, x.amount, percent_rank() over (order by x.amount desc)
+from (
+	select customer_id, sum(amount) as amount
+    from payment group by customer_id
+) as x
+order by x.amount desc;
+
+-- 첫 행 또는 마지막 행의 값을 구하는 함수 - first_value, last_value
+# first_value(열) over ([partition by] order by 열) 가장 낮은 값
+# last_value(열) over ([partition by] order by 열) 가장 높은 값
+-- first_values 함수로 가장 높은 값 조회
+select x.payment_date, x.amount,
+	first_value(x.amount) over(order by x.payment_date) as f_value,
+    last_value(x.amount) over(order by x.payment_date range between unbounded
+    # 윈도우 함수를 사용하지 않으면 last_value 함수로 정확한 결과를 얻을 수 없다는 점
+preceding and unbounded following) as l_value,
+	x.amount - first_value(x.amount) over(order by x.payment_date) as increase_amount
+from (
+	select date_format(payment_date, '%y-%m-%d') as payment_date,
+    sum(amount) as amount
+    from payment group by date_format(payment_date, '%y-%m-%d')
+) as x
+order by x.payment_date;
+/*range between unbounded
+preceding and unbounded following
+구문은 sql의 윈도후 함수에서 사용되며, 윈도우 프레임을 정의*/
+# 윈도우 함수 : 행과 행 사이의 관계를 정의하기 위해 제공되는 함수
+# 윈도우 프레임 : 윈도우 함수가 작동할 데이터의 범위 정의
+# 윈도우 프레임을 설정함으로써 함수는 해당 프레임 내에서만 작동
+# range between 
+# unbounded preceding -> 윈도우 프레임의 시작을 나타내는데 현재 행을 포함한 윈도우의 가장 첫 번째 행을 지정 
+# and unbounded following -> 윈도우 프레임의 끝을 나타내는데 현재 행을 포함한 윈도우의 가장 마지막 행을 지정
